@@ -12,7 +12,9 @@
     -> humidity:    { "current": value, "average": value };
 
  gcc main.c -o main -I/opt/homebrew/include -L/opt/homebrew/lib -lpaho-mqtt3c -ljson-c
- 
+gcc main.c -o main -lpaho-mqtt3c -ljson-c
+
+
 */
 
 #include "main.h"
@@ -20,9 +22,9 @@
 
 int
 main(int argc, const char * argv[]) {
-  
+
   logger(".... starting ...");
-  
+
   int socket_fd = 0;
   int optval    = 0;
   struct sockaddr_in serveraddr;
@@ -35,7 +37,7 @@ main(int argc, const char * argv[]) {
 
   logger("socket created");
 
-  
+
   /* setsockopt: Handy debugging trick that lets
    * us rerun the server immediately after we kill it;
    * otherwise we have to wait about 20 secs.
@@ -51,15 +53,15 @@ main(int argc, const char * argv[]) {
   serveraddr.sin_addr.s_addr = htonl(INADDR_ANY);
   serveraddr.sin_port = htons((unsigned short) PORT);
 
-  
+
   // ... bind socket to port ...
   if( bind(socket_fd, (struct sockaddr*) &serveraddr, sizeof(serveraddr)) < 0 ) {
     perror("error binding socket");
   }
 
   logger("socket bind to host and port");
-  
-  
+
+
   // ... UDP server start here ...
   udp_start(socket_fd);
 
@@ -73,7 +75,7 @@ udp_start (int socket_fd) {
 
   // ... create MQTT cliente ...
   MQTTClient client = udp_create_mqtt_client();
-  
+
 
   // ... make UDP server ...
   char buffer[BUFFER_SIZE + 1] = {0};
@@ -89,9 +91,9 @@ udp_start (int socket_fd) {
 
     bzero(&buffer, BUFFER_SIZE + 1);
     size_t n = recvfrom(socket_fd, buffer, BUFFER_SIZE, 0, NULL, NULL);
-    
+
     printf("buffer: %s\n", buffer);
-    
+
     // ... check if recv return error ...
     if ( n < 0 ) {
       perror("error recvfrom");
@@ -117,7 +119,7 @@ udp_start (int socket_fd) {
       continue;
     }
 
-    
+
     double diferential_temperature = fabs(d.current_t - d.average_t);
     double diferential_humidity    = fabs(d.current_h - d.average_h);
 
@@ -240,27 +242,98 @@ udp_validate_datagram (json_object* datagram, struct udp_datagram* d) {
 
 MQTTClient
 udp_create_mqtt_client (void) {
-  
-  logger("mqtt client creating");
-  
-  MQTTClient client;
-  MQTTClient_create(&client, MQTT_URL, MQTT_CLIENTID, MQTTCLIENT_PERSISTENCE_NONE, NULL);
-  
-  
-  MQTTClient_connectOptions opts = MQTTClient_connectOptions_initializer;
-  opts.username = MQTT_USERNAME;
-  opts.password = MQTT_PASSWORD;
-  opts.keepAliveInterval = 10;
-  opts.cleansession = 1;
-  
-  
-  if ( MQTTClient_connect(client, &opts) != MQTTCLIENT_SUCCESS ) {
-    perror("error MQTT client connect");
-    exit(EXIT_FAILURE);
+
+  FILE *fp = fopen("ca.crt", "w");
+  if (!fp) {
+    printf("Erro ao criar arquivo de certificado\n");
+    exit(-1);
   }
-  
-  logger("mqtt client connect");
-  
+  fprintf(fp, "%s", root_ca);
+  fclose(fp);
+
+  MQTTClient client;
+  MQTTClient_connectOptions conn_opts = MQTTClient_connectOptions_initializer;
+
+  MQTTClient_create(&client, MQTT_URL, MQTT_CLIENTID, MQTTCLIENT_PERSISTENCE_NONE, NULL);
+  conn_opts.keepAliveInterval = 20;
+  conn_opts.cleansession = 1;
+  conn_opts.username = MQTT_USERNAME;
+  conn_opts.password = MQTT_PASSWORD;
+
+  // Configurações SSL
+  MQTTClient_SSLOptions ssl_opts = MQTTClient_SSLOptions_initializer;
+  ssl_opts.enableServerCertAuth = 1;
+  ssl_opts.trustStore = "ca.crt"; // aponta para o arquivo gerado
+  conn_opts.ssl = &ssl_opts;
+
+  int rc;
+  if ((rc = MQTTClient_connect(client, &conn_opts)) != MQTTCLIENT_SUCCESS) {
+    printf("Failed to connect, return code %d\n", rc);
+    exit(-1);
+  }
+
+//
+//   logger("mqtt client creating");
+//
+//   MQTTClient client;
+//   MQTTClient_create(&client, MQTT_URL, MQTT_CLIENTID, MQTTCLIENT_PERSISTENCE_NONE, NULL);
+//
+//   logger(MQTT_USERNAME);
+//   logger(MQTT_PASSWORD);
+//
+//   MQTTClient_connectOptions conn_opts = MQTTClient_connectOptions_initializer;
+//   conn_opts.username = MQTT_USERNAME;
+//   conn_opts.password = MQTT_PASSWORD;
+//   conn_opts.keepAliveInterval = 10;
+//   conn_opts.cleansession = 1;
+//
+//   MQTTClient_SSLOptions ssl_opts = MQTTClient_SSLOptions_initializer;
+//   ssl_opts.enableServerCertAuth = 0;
+//
+//     ssl_opts.verify = 1;
+//     ssl_opts.CApath = NULL;
+//     ssl_opts.keyStore = NULL;
+//     ssl_opts.trustStore = NULL;
+//     ssl_opts.privateKey = NULL;
+//     ssl_opts.privateKeyPassword = NULL;
+//     ssl_opts.enabledCipherSuites = NULL;
+//   conn_opts.ssl = &ssl_opts;
+//
+//   int r = MQTTClient_connect(client, &conn_opts);
+//   if (r != MQTTCLIENT_SUCCESS) {
+//     printf("MQTT CONNECT FAILED: return code %d\n", r);
+//     exit(EXIT_FAILURE);
+//   } else {
+//     printf("MQTT CONNECT SUCCESS!\n");
+//   }
+//
+//   int qos = 1;
+//   int retained = 0;
+//
+//   MQTTClient_subscribe(client, MQTT_TOPIC, qos);
+//   printf("subscribed to %s \n", MQTT_TOPIC);
+//
+//   char* payload = "<your_payload>";
+//   int payloadlen = strlen(payload);
+//   MQTTClient_deliveryToken dt;
+//   MQTTClient_publish(client, MQTT_TOPIC, payloadlen, payload, qos, retained, &dt);
+//   printf("published to %s \n", MQTT_TOPIC);
+
+//   logger(rc);
+
+//   MQTTClient_connectOptions opts = MQTTClient_connectOptions_initializer;
+//   opts.username = MQTT_USERNAME;
+//   opts.password = MQTT_PASSWORD;
+//   opts.keepAliveInterval = 10;
+//   opts.cleansession = 1;
+//
+//
+//   if ( MQTTClient_connect(client, &opts) != MQTTCLIENT_SUCCESS ) {
+//     perror("error MQTT client connect");
+//     exit(EXIT_FAILURE);
+//   }
+
+
   return client;
 }
 
